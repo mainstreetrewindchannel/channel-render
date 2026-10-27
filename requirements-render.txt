@@ -1,0 +1,6 @@
+kokoro>=0.9.4
+soundfile
+numpy
+playwright
+pillow
+preshed==3.0.10  # 3.0.14 breaks spaCy model loading (Oct 2026)
