@@ -317,7 +317,12 @@ class Job:
         if n == 1:
             sh("cp", parts[0][0], out)
             return out
-        fc.append(f"[{prev}]fade=t=in:st=0:d=0.3,fade=t=out:st={max(0, dur - 0.3):.2f}:d=0.3[out]")
+        fades = []   # no dip to black where the camera is carrying on across the beat boundary
+        if not shots[0].get("continue_from"):
+            fades.append("fade=t=in:st=0:d=0.3")
+        if not shots[-1].get("hold_out"):
+            fades.append(f"fade=t=out:st={max(0, dur - 0.3):.2f}:d=0.3")
+        fc.append(f"[{prev}]{','.join(fades) or 'null'}[out]")
         prev = "out"
         sh("ffmpeg", "-y", "-loglevel", "error", *inputs, "-filter_complex", ";".join(fc), "-map", f"[{prev}]",
            "-frames:v", max(1, round(dur * FPS)), "-r", FPS, "-c:v", "libx264", "-preset", "veryfast" if self.draft else "medium",
@@ -408,11 +413,12 @@ class Job:
     def link_shots(self, seq):
         """Consecutive beats on the same newspaper page become one continuous camera move:
         the next beat starts exactly where the last one ended (no fade out to the full page and back in)."""
-        def one(show):
-            return show if isinstance(show, dict) else None
-        for a, b in zip(seq, seq[1:]):
-            sa, sb = one(a["show"]), one(b["show"])
-            if sa and sb and sa.get("type") == "newspaper" and sb.get("type") == "newspaper" and sa["src"] == sb["src"]:
+        # flatten: shots inside a multi-shot beat link too (Montgomery -> Springfield on one page = one move)
+        flat = []
+        for b_ in seq:
+            flat += b_["show"] if isinstance(b_["show"], list) else [b_["show"]]
+        for sa, sb in zip(flat, flat[1:]):
+            if isinstance(sa, dict) and isinstance(sb, dict) and sa.get("type") == "newspaper" and sb.get("type") == "newspaper" and sa["src"] == sb["src"]:
                 la = sa.get("_levels", 1)   # how many slow settles that shot ended after
                 sa["hold_out"] = True
                 sb["continue_from"] = {"box": sa.get("box", [0, 0, 1, 1]), "pad": sa.get("pad", 0.08), "levels": la}
