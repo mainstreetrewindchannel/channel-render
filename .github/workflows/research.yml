@@ -1,0 +1,58 @@
+name: Research
+
+# Gathers public-domain research material (newspaper pages, archive films, data files) for a studio project
+# and saves it to that studio repository's previews branch. Started by hand only.
+on:
+  workflow_dispatch:
+    inputs:
+      studio:
+        description: "Studio repository (owner/name)"
+        default: mainstreetrewindchannel/channel-studio
+      tool:
+        description: "fetch (list file of name+url) | issue (lccn date) | films (archive.org ids) | footage (JSON list of searches)"
+        required: true
+      args:
+        description: "fetch: path to list file in the studio repo; issue: 'lccn YYYY-MM-DD'; films: space-separated ids; footage: JSON list"
+        required: true
+      dest:
+        description: "Folder on the studio repo's previews branch"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.studio }}
+          token: ${{ secrets.STUDIO_TOKEN }}
+          path: studio
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils ffmpeg imagemagick > /dev/null
+      - name: Gather
+        env:
+          TOOL: ${{ inputs.tool }}
+          ARGS: ${{ inputs.args }}
+        run: |
+          mkdir -p out
+          case "$TOOL" in
+            fetch)   python3 research/fetch_research.py "studio/$ARGS" out > log.txt 2>&1 || true ;;
+            issue)   python3 research/fetch_issue.py $ARGS out > log.txt 2>&1 || true
+                     (cd out/thumbs && ls p*.jpg | split -l 12 - grp_ && for g in grp_*; do montage $(cat $g) -tile 6x2 -geometry 300x+4+4 -label '%f' ../sheet_${g#grp_}.jpg; done; rm -f grp_*) || true ;;
+            films)   python3 research/film_preview.py out $ARGS > log.txt 2>&1 || true ;;
+            footage) python3 -c 'import json,os; [print(q) for q in json.loads(os.environ["ARGS"])]' > q.txt
+                     mapfile -t QS < q.txt; python3 research/footage_search.py out "${QS[@]}" > log.txt 2>&1 || true ;;
+          esac
+          cp log.txt out/_log.txt
+          echo "::notice title=Research::$(grep -vE '^\s*$' log.txt | tail -40 | tr '\n' ' ' | cut -c1-1800)"
+      - name: Save to the studio previews branch
+        env:
+          TOKEN: ${{ secrets.STUDIO_TOKEN }}
+        run: |
+          git clone -q --depth 1 --branch previews "https://x-access-token:${TOKEN}@github.com/${{ inputs.studio }}.git" pv
+          mkdir -p "pv/${{ inputs.dest }}" && cp -r out/* "pv/${{ inputs.dest }}/"
+          cd pv && git add -A && git -c user.name="channel-render bot" -c user.email="noreply@github.com" commit -qm "Research: ${{ inputs.dest }}" && git push -q origin previews || echo nothing new
