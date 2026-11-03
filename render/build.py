@@ -14,6 +14,9 @@ timeline.json shape:
   "shorts": [{"id": "s1", "hook": "...", "say": ["line", ...], "show": [{...}, ...]}],
   "thumbnails": [{"big": "...", "accent": "...", "tag": "...", "image": "<visual src>"}]
 }
+Signature intro (render/intro.py): "ident": {"source": {"src": film url, "start": s, "crop": [x0,y0,x1,y1]}, "bumper": true}
+  -> the 6 s intro right after the cold open (first chapter without a card), with 1 s of that episode's own archival
+     shot, and the 2 s bumper right before the end screen. The jingle replaces the music bed while it plays.
 Visual ("show") types:
   image     {"src": url|path, "credit": "...", "motion": "in|out|left|right|up|down", "focus": [x, y]}
   newspaper {"src": image url, "words": url to LoC word coordinates (optional), "find": ["EGGS"], "box": [x0,y0,x1,y1] (0-1),
@@ -101,6 +104,17 @@ class Job:
                 seq.append({"show": card, "say": "", "hold": 3.6 if card.get("time") else 3.2, "chapter": ci, "card": True})
             for b in ch["beats"]:
                 seq.append({**b, "chapter": ci})
+        idn = self.tl.get("ident")
+        if idn:
+            # full intro: after the cold open = before the first chapter card
+            first_card = next((i for i, b in enumerate(seq) if b.get("card")), None)
+            if first_card:
+                seq.insert(first_card, {"show": {"type": "ident", "variant": "full", "source": idn.get("source")},
+                                        "say": "", "hold": 6.0, "chapter": seq[first_card - 1]["chapter"], "ident": True})
+            # bumper: right before the end screen
+            if idn.get("bumper", True) and seq and isinstance(seq[-1]["show"], dict) and seq[-1]["show"].get("type") == "end":
+                seq.insert(len(seq) - 1, {"show": {"type": "ident", "variant": "bumper"}, "say": "", "hold": 2.0,
+                                          "chapter": seq[-1]["chapter"], "ident": True})
         return seq
 
     # ------------------------------------------------------------ narration
@@ -280,7 +294,25 @@ class Job:
             return out
         if isinstance(show, list):
             return self.multi_shot(show, dur, out, idx)
+        if show.get("type") == "ident":
+            return self.ident_clip(show, out)
         return self.shot(show, dur, out)
+
+    def ident_clip(self, show, out):
+        """The signature intro / bumper: silent video for the timeline, its sound kept aside for the mix."""
+        import intro
+        src = show.get("source") or {}
+        film = self.fetch_file(src["src"]) if src.get("src") else None
+        if src.get("credit"):
+            self.credits.append(src["credit"])
+        full = self.p("clips", "ident-" + key(show) + "-av.mp4")
+        intro.build(ROOT, full, show.get("variant", "full"), film, float(src.get("start", 0)), src.get("crop"))
+        sh("ffmpeg", "-y", "-loglevel", "error", "-i", full, "-an", "-c:v", "copy", out)
+        sh("ffmpeg", "-y", "-loglevel", "error", "-i", full, "-vn", "-ar", "48000", "-ac", "2", self.ident_wav(show))
+        return out
+
+    def ident_wav(self, show):
+        return self.p("audio", "ident-" + key(show) + ".wav")
 
     def multi_shot(self, shots, dur, out, idx):
         """Several shots inside one narration beat, joined with short dissolves.
@@ -510,16 +542,33 @@ class Job:
             inputs += ["-i", seg]
             fc.append(f"[{j}:a]adelay={int(s0*1000)}|{int(s0*1000)}[m{j}]")
         fc.append("".join(f"[m{j}]" for j in range(len(pieces))) + f"amix=inputs={len(pieces)}:normalize=0,atrim=0:{total:.3f}[out]")
+        # the bed steps aside (0.5 s ramps) wherever the signature intro or bumper plays
+        spans, t = [], 0.0
+        for b in seq:
+            if b.get("ident"):
+                spans.append((t, t + b["dur"]))
+            t += b["dur"]
+        if spans:
+            gate = "*".join(f"clip(max({a:.3f}-t,t-{b2:.3f})/0.5,0,1)" for a, b2 in spans)
+            fc[-1] = fc[-1].replace("[out]", "[pre]")
+            fc.append(f"[pre]volume='{gate}':eval=frame[out]")
         out = self.p("audio", "music.wav")
         sh("ffmpeg", "-y", "-loglevel", "error", *inputs, "-filter_complex", ";".join(fc), "-map", "[out]", out)
         return out
 
-    def mix(self, narration, music, total):
+    def mix(self, narration, music, total, idents=()):
         out = self.p("audio", "mix.wav")
         fc = ("[0:a]aformat=channel_layouts=stereo,asplit=2[nv][sc];"
-              "[1:a][sc]sidechaincompress=threshold=0.03:ratio=6:attack=30:release=600[mus];"
-              "[nv][mus]amix=inputs=2:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[out]")
-        sh("ffmpeg", "-y", "-loglevel", "error", "-i", narration, "-i", music, "-filter_complex", fc,
+              "[1:a][sc]sidechaincompress=threshold=0.03:ratio=6:attack=30:release=600[mus]")
+        ins = ["-i", narration, "-i", music]
+        labels = "[nv][mus]"
+        for j, (wav, t0) in enumerate(idents):
+            ins += ["-i", wav]
+            ms = int(t0 * 1000)
+            fc += f";[{j + 2}:a]aformat=channel_layouts=stereo,volume=1.6,adelay={ms}|{ms}[id{j}]"
+            labels += f"[id{j}]"
+        fc += f";{labels}amix=inputs={2 + len(idents)}:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[out]"
+        sh("ffmpeg", "-y", "-loglevel", "error", *ins, "-filter_complex", fc,
            "-map", "[out]", "-t", f"{total:.3f}", "-ar", "48000", out)
         return out
 
@@ -575,7 +624,14 @@ class Job:
             raise RuntimeError(f"joined video is {got:.1f}s but the timeline is {total:.1f}s")
         narration = self.narration_track(seq)
         music = self.music_track(seq, total)
-        mix = self.mix(narration, music, total)
+        idents, t = [], 0.0
+        for b in seq:
+            if b.get("ident"):
+                if not os.path.exists(self.ident_wav(b["show"])):   # clip came from cache without its sound
+                    self.ident_clip(b["show"], self.p("clips", "ident-redo-" + key(b["show"]) + ".mp4"))
+                idents.append((self.ident_wav(b["show"]), t))
+            t += b["dur"]
+        mix = self.mix(narration, music, total, idents)
         final = self.p("final", "video.mp4")
         sh("ffmpeg", "-y", "-loglevel", "error", "-i", body, "-i", mix, "-map", "0:v", "-map", "1:a",
            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-shortest", final)
