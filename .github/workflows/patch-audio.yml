@@ -1,0 +1,48 @@
+name: Patch audio
+# Re-level the audio of an existing render without re-rendering:
+# downloads video.mp4 from the studio's render release, applies a gain to the
+# given time windows (video stream copied), and hands it back.
+on:
+  workflow_dispatch:
+    inputs:
+      studio:
+        description: "Studio repo (owner/name)"
+        required: true
+      job:
+        description: "Job folder, e.g. jobs/2026-11-saturday-1959"
+        required: true
+      windows:
+        description: "Comma list of start-end seconds, e.g. 64.40-70.55,930.50-932.65"
+        required: true
+      gain:
+        description: "Linear gain inside the windows, e.g. 0.6875"
+        required: true
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Patch
+        env:
+          GH_TOKEN: ${{ secrets.STUDIO_TOKEN }}
+          STUDIO: ${{ inputs.studio }}
+          JOB: ${{ inputs.job }}
+          WINDOWS: ${{ inputs.windows }}
+          GAIN: ${{ inputs.gain }}
+        run: |
+          set -euo pipefail
+          [[ "$STUDIO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::bad studio"; exit 1; }
+          [[ "$JOB" =~ ^jobs/[A-Za-z0-9_.-]+$ ]] || { echo "::error::bad job"; exit 1; }
+          [[ "$WINDOWS" =~ ^[0-9.]+-[0-9.]+(,[0-9.]+-[0-9.]+)*$ ]] || { echo "::error::bad windows"; exit 1; }
+          [[ "$GAIN" =~ ^[0-9]*\.?[0-9]+$ ]] || { echo "::error::bad gain"; exit 1; }
+          sudo apt-get -qq update && sudo apt-get -qq install -y ffmpeg > /dev/null
+          SLUG=$(basename "$JOB"); tag="render-$SLUG"
+          gh release download "$tag" -R "$STUDIO" -p video.mp4 -D in
+          cond=$(echo "$WINDOWS" | tr ',' '\n' | awk -F- '{printf "%sbetween(t,%s,%s)", (NR>1?"+":""), $1, $2}')
+          mkdir -p out
+          ffmpeg -v error -y -i in/video.mp4 -map 0 -c:v copy \
+            -af "volume='if(${cond},${GAIN},1)':eval=frame" -c:a aac -b:a 192k -ar 48000 \
+            -movflags +faststart out/video.mp4
+          gh release upload "$tag" -R "$STUDIO" out/video.mp4 --clobber
+          echo "::notice title=Patched::$WINDOWS x$GAIN -> $STUDIO release $tag"
