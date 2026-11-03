@@ -565,7 +565,7 @@ class Job:
         for j, (wav, t0) in enumerate(idents):
             ins += ["-i", wav]
             ms = int(t0 * 1000)
-            fc += f";[{j + 2}:a]aformat=channel_layouts=stereo,volume=1.6,adelay={ms}|{ms}[id{j}]"
+            fc += f";[{j + 2}:a]aformat=channel_layouts=stereo,volume=1.1,adelay={ms}|{ms}[id{j}]"
             labels += f"[id{j}]"
         fc += f";{labels}amix=inputs={2 + len(idents)}:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[out]"
         sh("ffmpeg", "-y", "-loglevel", "error", *ins, "-filter_complex", fc,
