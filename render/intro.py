@@ -372,47 +372,73 @@ def reverb(x, secs=0.9, mix=0.14):
     return x + mix * wet
 
 
-def sound(variant):
+# Where each variant starts in the intro jingle (assets/music/intro-jingle.mp3, Suno, 2026-11-02), chosen so:
+#   full:   motif starts as the folio opens, chord change on the sun (3.35 s), final chord as REWIND completes (4.93 s)
+#   bumper: last cadence, final chord as the logo lands (0.90 s)
+#   short:  final chord on the sun and wordmark (0.38 s)
+MUSIC_AT = {"full": 0.74, "bumper": 4.78, "short": 5.30}
+FADE_OUT = {"full": 0.5, "bumper": 0.4, "short": 0.25}
+
+
+def load_music(path, start, dur):
+    raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-ss", str(start), "-t", str(dur), "-i", path,
+                          "-f", "f32le", "-ac", "2", "-ar", str(SR), "-"], capture_output=True, check=True).stdout
+    m = np.frombuffer(raw, np.float32).reshape(-1, 2).astype(float)
+    out = np.zeros((int(SR * dur), 2))
+    out[: len(m)] = m[: len(out)]
+    return out
+
+
+def sound(variant, music=None, music_at=None):
+    """Stereo mix. With music: the jingle carries it and the paper/click/reverse sit quietly underneath."""
     dur = {"full": 6.0, "bumper": 2.0, "short": 1.0}[variant]
     n = int(SR * dur)
     buf = np.zeros(n)
+    sfx = 0.45 if music else 1.0
     if variant == "full":
         # paper feed 0.00-0.60: dry paper slide
         m = int(0.6 * SR)
         tt = np.arange(m) / SR
         grain = np.abs(band_noise(m, 3, 40, 3))
         paper = band_noise(m, 1800, 7500, 1) * (0.55 + 0.45 * grain) * np.sin(np.pi * tt / 0.6) ** 0.7
-        place_sig(buf, paper, 0.0, 0.10)
+        place_sig(buf, paper, 0.0, 0.10 * sfx)
         # archive click 0.60-0.867: one restrained mechanical click
         m = int(0.267 * SR)
         tt = np.arange(m) / SR
         click = band_noise(m, 2500, 9000, 2) * np.exp(-tt / 0.0025) * 0.9
         thump = np.sin(2 * np.pi * 95 * tt) * np.exp(-tt / 0.03) * 0.8
         tail = band_noise(m, 600, 3000, 4) * np.exp(-tt / 0.04) * 0.15
-        place_sig(buf, click + thump + tail, 0.6, 0.30)
+        place_sig(buf, click + thump + tail, 0.6, 0.30 * sfx)
         # soft reverse movement 1.60-2.50: low paper/transport, falling
         m = int(0.9 * SR)
         tt = np.arange(m) / SR
         low = band_noise(m, 80, 1400, 5) * np.sin(np.pi * tt / 0.9) ** 1.5
         hiss = band_noise(m, 1400, 4000, 6) * np.sin(np.pi * tt / 0.9) ** 2 * np.clip(1 - tt / 0.9, 0, 1) * 0.35
-        place_sig(buf, low + hiss, 1.6, 0.09)
-        # the signature: C4 then G4
-        place_sig(buf, piano(261.63, 0.933, 0.933), 3.4, 0.42)
-        place_sig(buf, piano(392.00, 1.433, 1.433), 4.1, 0.40)
+        place_sig(buf, low + hiss, 1.6, 0.09 * sfx)
+        if not music:   # fallback signature: C4 then G4
+            place_sig(buf, piano(261.63, 0.933, 0.933), 3.4, 0.42)
+            place_sig(buf, piano(392.00, 1.433, 1.433), 4.1, 0.40)
+    elif music:
+        pass
     elif variant == "bumper":
         place_sig(buf, piano(261.63, 0.8, 0.8), 0.35, 0.42)
         place_sig(buf, piano(392.00, 1.25, 1.2), 0.75, 0.40)
     else:
         place_sig(buf, piano(261.63, 0.45, 0.45), 0.0, 0.40)
         place_sig(buf, piano(392.00, 0.68, 0.68), 0.3, 0.38)
-    buf = reverb(buf)
-    buf = buf / (np.abs(buf).max() + 1e-9) * 0.5
-    return buf
+    if not music:
+        buf = reverb(buf)
+        buf = buf / (np.abs(buf).max() + 1e-9) * 0.5
+        return np.stack([buf, buf], axis=1)
+    m = load_music(music, MUSIC_AT[variant] if music_at is None else music_at, dur)
+    t = np.arange(n) / SR
+    env = np.clip(t / 0.015, 0, 1) * np.clip((dur - t) / FADE_OUT[variant], 0, 1)
+    mix = m * env[:, None] + (buf * 0.5)[:, None]
+    return mix / (np.abs(mix).max() + 1e-9) * 0.7
 
 
 def write_wav(path, x):
-    pcm = (np.clip(x, -1, 1) * 32767).astype(np.int16)
-    st = np.stack([pcm, pcm], axis=1)
+    st = (np.clip(x, -1, 1) * 32767).astype(np.int16)
     with wave.open(path, "wb") as w:
         w.setnchannels(2)
         w.setsampwidth(2)
@@ -435,7 +461,11 @@ def encode(frames, size, wav, out):
         raise RuntimeError("ffmpeg failed")
 
 
-def build(studio, out, variant="full", source=None, start=0.0, crop=None):
+def build(studio, out, variant="full", source=None, start=0.0, crop=None, music="auto", music_at=None):
+    if music == "auto":
+        music = os.path.join(studio, "assets", "music", "intro-jingle.mp3")
+    if music and not os.path.exists(music):
+        music = None
     if variant == "full":
         frames, size = full_frames(studio, source, start, crop)
     elif variant == "bumper":
@@ -446,7 +476,7 @@ def build(studio, out, variant="full", source=None, start=0.0, crop=None):
         frames = logo_only_frames(studio, size, 30, assemble=(0, 9), move=(9, 19), sun_at=(9, 19), stacked=True)
     with tempfile.TemporaryDirectory() as td:
         wav = os.path.join(td, "intro.wav")
-        write_wav(wav, sound(variant))
+        write_wav(wav, sound(variant, music, music_at))
         encode(frames, size, wav, out)
     return out
 
@@ -459,6 +489,8 @@ if __name__ == "__main__":
     ap.add_argument("--source")
     ap.add_argument("--start", type=float, default=0.0)
     ap.add_argument("--crop", help="x0,y0,x1,y1 in 0-1 of the source frame")
+    ap.add_argument("--music", default="auto", help="jingle file (default: studio assets/music/intro-jingle.mp3; 'none' = synth notes)")
+    ap.add_argument("--music-at", type=float, help="override where in the jingle this variant starts")
     a = ap.parse_args()
     crop = [float(v) for v in a.crop.split(",")] if a.crop else None
-    print(build(a.studio, a.out, a.variant, a.source, a.start, crop))
+    print(build(a.studio, a.out, a.variant, a.source, a.start, crop, None if a.music == "none" else a.music, a.music_at))
