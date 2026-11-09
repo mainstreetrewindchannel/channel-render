@@ -4,6 +4,9 @@ List file lines: <name> <url>   (blank lines and # comments ignored)
 """
 import os, subprocess, sys, time, urllib.request
 lst, out = sys.argv[1], sys.argv[2]
+# stop starting new downloads before the workflow's 120-minute timeout, so what we have still gets saved
+BUDGET = float(os.environ.get("FETCH_BUDGET_S", 95 * 60))
+T0 = time.time()
 os.makedirs(out, exist_ok=True)
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36", "Accept": "*/*", "Accept-Language": "en-US,en;q=0.9"}
 for line in open(lst):
@@ -11,6 +14,9 @@ for line in open(lst):
     if not line or line.startswith("#"):
         continue
     name, url = line.split(None, 1)
+    if time.time() - T0 > BUDGET:
+        print(f"SKIP {name}: time budget reached", flush=True)
+        continue
     raw = os.path.join(out, name)
     if url.startswith("BLS "):
         # BLS API v1 POST: "BLS series1,series2 startyear endyear"
@@ -48,6 +54,10 @@ for line in open(lst):
                 except Exception:
                     pass
                 wait = min(max(ra, 8 * (attempt + 1) * (4 if code == 429 else 1)), 300)
+                if "tile.loc.gov" in url:
+                    if attempt >= 1:
+                        break  # static page text: skip it rather than stall the whole list
+                    wait = min(wait, 60)
                 print(f"     {name}: HTTP {code or 'err'}, waiting {wait}s", flush=True)
                 time.sleep(wait)
                 continue
