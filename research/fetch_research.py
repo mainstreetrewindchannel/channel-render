@@ -52,8 +52,10 @@ for line in open(lst):
                 time.sleep(wait)
                 continue
             break
-    if "loc.gov" in url:
-        time.sleep(12)  # LoC search allows only a few requests a minute; a 429 can lock the IP out
+    if "www.loc.gov" in url:
+        time.sleep(12)
+    elif "tile.loc.gov" in url:
+        time.sleep(1.5)  # static files (OCR text, images): much looser limit  # LoC search allows only a few requests a minute; a 429 can lock the IP out
     if err:
         print(f"FAIL {name}: {err}", flush=True)
         continue
