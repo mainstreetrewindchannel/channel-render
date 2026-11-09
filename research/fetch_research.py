@@ -41,11 +41,19 @@ for line in open(lst):
             err = e
             code = getattr(e, "code", 0)
             if code in (429, 500, 502, 503, 504, 520, 522, 524) or "IncompleteRead" in repr(e) or "timed out" in str(e):
-                time.sleep(8 * (attempt + 1))
+                # LoC answers 429 with Retry-After; honor it (capped) instead of hammering
+                ra = 0
+                try:
+                    ra = int(e.headers.get("Retry-After", 0)) if code == 429 else 0
+                except Exception:
+                    pass
+                wait = min(max(ra, 8 * (attempt + 1) * (4 if code == 429 else 1)), 300)
+                print(f"     {name}: HTTP {code or 'err'}, waiting {wait}s", flush=True)
+                time.sleep(wait)
                 continue
             break
     if "loc.gov" in url:
-        time.sleep(3)  # be gentle with the Library of Congress
+        time.sleep(12)  # LoC search allows only a few requests a minute; a 429 can lock the IP out
     if err:
         print(f"FAIL {name}: {err}", flush=True)
         continue
