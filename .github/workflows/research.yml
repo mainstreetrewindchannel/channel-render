@@ -55,4 +55,11 @@ jobs:
         run: |
           git clone -q --depth 1 --branch previews "https://x-access-token:${TOKEN}@github.com/${{ inputs.studio }}.git" pv
           mkdir -p "pv/${{ inputs.dest }}" && cp -r out/* "pv/${{ inputs.dest }}/"
-          cd pv && git add -A && git -c user.name="channel-render bot" -c user.email="noreply@github.com" commit -qm "Research: ${{ inputs.dest }}" && git push -q origin previews || echo nothing new
+          cd pv && git add -A
+          git -c user.name="channel-render bot" -c user.email="noreply@github.com" commit -qm "Research: ${{ inputs.dest }}" || { echo nothing new; exit 0; }
+          # parallel research runs race on previews: rebase and retry instead of dropping the results
+          for i in 1 2 3 4 5; do
+            git push -q origin previews && exit 0
+            sleep $((i * 7)); git pull -q --rebase origin previews
+          done
+          echo "::error title=Previews push::could not push ${{ inputs.dest }} after 5 tries"; exit 1
