@@ -101,7 +101,12 @@ def render(kind, path, out, dur, show, w=1920, h=1080, fps=30, draft=False, over
         def box_rect(box, pad):
             x0, y0, x1, y1 = [v * s for v, s in zip(box, (pw, ph, pw, ph))]
             bw, bh = (x1 - x0) * (1 + pad), (y1 - y0) * (1 + pad)
-            return fit_rect((x0 + x1) / 2, (y0 + y1) / 2, max(bw, bh * aspect), aspect)
+            r = fit_rect((x0 + x1) / 2, (y0 + y1) / 2, max(bw, bh * aspect), aspect)
+            # keep the view on the paper: slide it back inside the page when it fits (a box at a page edge
+            # otherwise shows black past the edge, Nov 12 Chapel Hill)
+            dx = (max(0, -r[0]) - max(0, r[2] - pw)) if r[2] - r[0] <= pw else 0
+            dy = (max(0, -r[1]) - max(0, r[3] - ph)) if r[3] - r[1] <= ph else 0
+            return (r[0] + dx, r[1] + dy, r[2] + dx, r[3] + dy)
 
         def drifted(r, levels=1):   # where a shot ends after its slow settle(s) (see the drift in the frame loop)
             return fit_rect((r[0] + r[2]) / 2, (r[1] + r[3]) / 2, (r[2] - r[0]) * (1 - DRIFT) ** levels, aspect)

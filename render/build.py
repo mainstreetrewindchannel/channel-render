@@ -285,6 +285,15 @@ class Job:
             return self.fetch(show["src"])
         raise ValueError(f"unknown visual type {t}")
 
+    def note_credits(self, show):
+        """Log the credit lines a beat's visuals need, without drawing them."""
+        for s in (show if isinstance(show, list) else [show]):
+            if not isinstance(s, dict):
+                continue
+            c = (s.get("source") or {}).get("credit") if s.get("type") == "ident" else s.get("credit")
+            if c:
+                self.credits.append(c)
+
     def clip(self, b, idx):
         """Render one beat to a silent H.264 clip of exactly b['dur'] seconds."""
         show = b["show"]
@@ -292,6 +301,7 @@ class Job:
         frames = max(1, round(dur * FPS))
         out = self.p("clips", f"c{idx:04d}-{key(show, round(dur, 2), self.draft, 'v2')}.mp4")
         if os.path.exists(out):
+            self.note_credits(show)   # a cached clip skips the drawing code that logs credits (Nov 12: empty credits.json)
             return out
         if isinstance(show, list):
             return self.multi_shot(show, dur, out, idx)
