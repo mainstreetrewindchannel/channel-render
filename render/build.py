@@ -13,6 +13,7 @@ timeline.json shape:
   "end": {"text": "...", "sub": "..."},
   "shorts": [{"id": "s1", "hook": "...", "say": ["line", ...], "show": [{...}, ...]}],
   "thumbnails": [{"big": "...", "accent": "...", "tag": "...", "image": "<visual src>"}]
+                (or "frame": {"src": film url, "start": seconds} for a still from archival film)
 }
 Signature intro (render/intro.py): "ident": {"source": {"src": film url, "start": s, "crop": [x0,y0,x1,y1]}, "bumper": true}
   -> the 6 s intro right after the cold open (first chapter without a card), with 1 s of that episode's own archival
@@ -656,7 +657,14 @@ class Job:
     def thumbs(self):
         outs = []
         for i, t in enumerate(self.tl.get("thumbnails", [])):
-            img = self.fetch(t["image"]) if t.get("image") else None
+            if t.get("frame"):   # a still from archival film: {"src": mp4 url, "start": seconds}
+                fsrc = self.fetch_file(t["frame"]["src"])
+                img = self.p("media", "thumbframe-" + key(t["frame"]) + ".png")
+                if not os.path.exists(img):
+                    sh("ffmpeg", "-v", "error", "-y", "-ss", str(float(t["frame"]["start"])), "-i", fsrc,
+                       "-frames:v", "1", "-vf", "scale=1280:-2:flags=lanczos", img)
+            else:
+                img = self.fetch(t["image"]) if t.get("image") else None
             png = G.thumbnail(t, self.p("gfx"), image_path=img)
             dst = self.p("final", f"thumb-{i+1}.png")
             sh("convert", png, "-quality", "92", dst.replace(".png", ".jpg"))
