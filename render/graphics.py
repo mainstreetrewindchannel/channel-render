@@ -81,8 +81,11 @@ def render(body_html, out, w=1920, h=1080, css="", transparent=False):
     return out
 
 
+GFX_VERSION = 2  # bump whenever card HTML/CSS changes, or cached PNGs are reused with the old look
+
+
 def cache_name(kind, spec, w, h, outdir):
-    key = hashlib.sha1(json.dumps([kind, spec, w, h], sort_keys=True).encode()).hexdigest()[:12]
+    key = hashlib.sha1(json.dumps([GFX_VERSION, kind, spec, w, h], sort_keys=True).encode()).hexdigest()[:12]
     return os.path.join(outdir, f"{kind}-{key}.png")
 
 
