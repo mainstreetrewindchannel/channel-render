@@ -299,7 +299,7 @@ class Job:
         show = b["show"]
         dur = b["dur"]
         frames = max(1, round(dur * FPS))
-        out = self.p("clips", f"c{idx:04d}-{key(show, round(dur, 2), self.draft, 'v2')}.mp4")
+        out = self.p("clips", f"c{idx:04d}-{key(show, round(dur, 2), self.draft, 'v2', G.GFX_VERSION)}.mp4")
         if os.path.exists(out):
             self.note_credits(show)   # a cached clip skips the drawing code that logs credits (Nov 12: empty credits.json)
             return out
