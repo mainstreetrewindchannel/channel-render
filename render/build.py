@@ -538,6 +538,9 @@ class Job:
             mood = self.tl["chapters"][ci].get("mood", "calm")
             pool = [t for t in by_mood.get(mood, by_mood["calm"]) if t["file"] not in used] or by_mood.get(mood, by_mood["calm"])
             tr = rng.choice(pool)
+            pick = self.tl["chapters"][ci].get("track")  # explicit track (path under assets/music) overrides the mood pick
+            if pick:
+                tr = next(t for t in cat if t["file"] == pick)
             used.append(tr["file"])
             if tr.get("attribution"):
                 self.credits.append("Music: " + tr["attribution"])
