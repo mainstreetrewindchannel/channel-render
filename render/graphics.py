@@ -172,7 +172,7 @@ def statement(spec, outdir, w=1920, h=1080):
     accent = spec.get("accent")
     text = esc(spec["text"])
     if accent:
-        text = text.replace(esc(accent), f"<span style='color:{RED}'>{esc(accent)}</span>")
+        text = text.replace(esc(accent), f"<span style='color:{RED};white-space:nowrap'>{esc(accent)}</span>")  # never split the highlighted figure across lines
     body = f"""
 <div class=grain></div>
 <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:30px;padding:0 160px">
