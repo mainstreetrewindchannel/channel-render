@@ -38,7 +38,11 @@ for line in open(lst):
     err = None
     for attempt in range(5):
         try:
-            req = urllib.request.Request(url, headers=UA)
+            hdr = UA
+            if "wikimedia.org" in url or "wikipedia.org" in url:
+                # Wikimedia answers 429/403 to browser-like UAs from cloud IPs; its policy wants a descriptive UA
+                hdr = {**UA, "User-Agent": "MainStreetRewindResearch/1.0 (https://github.com/mainstreetrewindchannel; research downloads) python-urllib"}
+            req = urllib.request.Request(url, headers=hdr)
             with urllib.request.urlopen(req, timeout=120) as r, open(raw, "wb") as fh:
                 fh.write(r.read())
             err = None
