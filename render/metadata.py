@@ -18,9 +18,12 @@ credits = json.load(open(os.path.join(final, "credits.json"))) if os.path.exists
 job_credits = []
 cp = os.path.join(job, "credits.json")
 if os.path.exists(cp):
-    for c in json.load(open(cp)).get("assets", []):
-        if c.get("credit_line"):
-            job_credits.append(c["credit_line"])
+    jc = json.load(open(cp))
+    # job credits.json is either {"assets": [{"credit_line": ...}]} or a list of {"credit": ...}
+    for c in (jc.get("assets", []) if isinstance(jc, dict) else jc):
+        line = c.get("credit_line") or c.get("credit")
+        if line:
+            job_credits.append(line)
 
 parts = [m["description"].strip()]
 if chapters:
